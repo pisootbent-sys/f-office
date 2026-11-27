@@ -7,7 +7,12 @@ const CACHE = 'foffice-v1';
 const SHELL = ['./', 'index.html', 'manifest.json', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // เก็บทีละไฟล์ ถ้าไฟล์ไหนไม่มีใน repo ก็ข้ามไป ไม่ทำให้การติดตั้ง service worker ล้มเหลว
+  e.waitUntil(
+    caches.open(CACHE)
+      .then((c) => Promise.all(SHELL.map((u) => c.add(u).catch(() => null))))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener('activate', (e) => {
