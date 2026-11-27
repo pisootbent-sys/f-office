@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ตรวจสอบการติดตั้งแอป</title>
+<style>
+  body { font-family: system-ui, 'Sarabun', sans-serif; margin: 0; background: #f3f5f9; color: #18203a; }
+  header { background: #0c1a3d; color: #fff; padding: 16px 20px; border-bottom: 3px solid #c8a44d; }
+  header h1 { margin: 0; font-size: 19px; }
+  main { max-width: 640px; margin: 0 auto; padding: 16px; }
+  .row { background: #fff; border: 1px solid #d8deea; border-left: 5px solid #ccc; border-radius: 6px; padding: 12px 14px; margin-bottom: 10px; }
+  .row.ok { border-left-color: #1c7c4d; } .row.bad { border-left-color: #b42318; } .row.warn { border-left-color: #c8a44d; }
+  .row b { display: block; margin-bottom: 2px; }
+  .row small { color: #5a647c; display: block; line-height: 1.5; word-break: break-all; }
+  .sum { font-size: 15px; line-height: 1.6; background: #fff; border: 1px dashed #b9c2d6; border-radius: 6px; padding: 12px 14px; margin-bottom: 14px; }
+</style>
+</head>
+<body>
+<header><h1>ตรวจสอบการติดตั้งแอป F Office</h1></header>
+<main>
+  <div class="sum" id="sum">กำลังตรวจสอบ…</div>
+  <div id="out"></div>
+</main>
+<script>
+(function () {
+  var out = document.getElementById('out'), sum = document.getElementById('sum');
+  var problems = [];
+  function add(state, title, detail) {
+    var d = document.createElement('div');
+    d.className = 'row ' + state;
+    d.innerHTML = '<b></b><small></small>';
+    d.querySelector('b').textContent = (state === 'ok' ? '✓ ' : state === 'bad' ? '✗ ' : '! ') + title;
+    d.querySelector('small').textContent = detail || '';
+    out.appendChild(d);
+    if (state === 'bad') problems.push(title);
+  }
+  function head(url) {
+    return fetch(url, { cache: 'no-store' }).then(function (r) { return r; }).catch(function () { return { ok: false, status: 0 }; });
+  }
+
+  var ua = navigator.userAgent || '';
+  var isIOS = /iPhone|iPad|iPod/.test(ua);
+  var inApp = /Line\/|FBAN|FBAV|FB_IAB|Instagram|MicroMessenger|; wv\)/.test(ua);
+
+  add(location.protocol === 'https:' || location.hostname === 'localhost' ? 'ok' : 'bad', 'เปิดผ่าน https', location.href);
+  add(inApp ? 'bad' : 'ok', inApp ? 'อยู่ในเบราว์เซอร์ของแอปอื่น (LINE/Facebook ฯลฯ)' : 'เบราว์เซอร์ปกติ',
+      inApp ? 'ติดตั้งแอปไม่ได้ในเบราว์เซอร์แบบนี้ ให้คัดลอกลิงก์ไปเปิดด้วย Chrome หรือ Safari' : ua);
+  if (isIOS) add('warn', 'iPhone/iPad', 'iPhone ไม่มีปุ่มติดตั้งอัตโนมัติ ต้องใช้ Safari → ปุ่มแชร์ → เพิ่มไปยังหน้าจอโฮม');
+  add(window.matchMedia('(display-mode: standalone)').matches ? 'ok' : 'warn', 'โหมดการเปิด',
+      window.matchMedia('(display-mode: standalone)').matches ? 'เปิดแบบแอปอยู่แล้ว' : 'เปิดแบบหน้าเว็บทั่วไป (ปกติ)');
+
+  var base = location.href.replace(/[^\/]*$/, '');
+
+  head(base + 'index.html').then(function (r) {
+    add(r.ok ? 'ok' : 'bad', 'ไฟล์ index.html', 'สถานะ ' + r.status);
+    return head(base + 'manifest.json');
+  }).then(function (r) {
+    add(r.ok ? 'ok' : 'bad', 'ไฟล์ manifest.json', r.ok ? 'พบไฟล์' : 'ไม่พบ (สถานะ ' + r.status + ') — ตรวจชื่อไฟล์และตำแหน่งใน repo');
+    return r.ok ? r.json().catch(function () { add('bad', 'manifest.json อ่านไม่ได้', 'รูปแบบไฟล์ไม่ถูกต้อง'); return null; }) : null;
+  }).then(function (m) {
+    var icons = (m && m.icons) ? m.icons : [{ src: 'icons/icon-192.png' }, { src: 'icons/icon-512.png' }];
+    return icons.reduce(function (p, ic) {
+      return p.then(function () {
+        return head(base + ic.src).then(function (r) {
+          add(r.ok ? 'ok' : 'bad', 'ไอคอน ' + ic.src, r.ok ? 'พบไฟล์' : 'ไม่พบ (สถานะ ' + r.status + ') — ต้องมีโฟลเดอร์ icons ใน repo');
+        });
+      });
+    }, Promise.resolve());
+  }).then(function () {
+    return head(base + 'sw.js');
+  }).then(function (r) {
+    add(r.ok ? 'ok' : 'bad', 'ไฟล์ sw.js', r.ok ? 'พบไฟล์' : 'ไม่พบ (สถานะ ' + r.status + ')');
+    if (!('serviceWorker' in navigator)) { add('bad', 'เบราว์เซอร์รองรับ service worker', 'ไม่รองรับ'); return; }
+    return navigator.serviceWorker.getRegistration(base).then(function (reg) {
+      if (reg && reg.active) add('ok', 'service worker ทำงานอยู่', 'สถานะ: ' + reg.active.state);
+      else add('warn', 'service worker ยังไม่ทำงาน', 'เปิดหน้าแรก (index.html) หนึ่งครั้งแล้วกลับมาตรวจใหม่');
+    });
+  }).then(function () {
+    var fired = false;
+    window.addEventListener('beforeinstallprompt', function () { fired = true; });
+    return new Promise(function (res) { setTimeout(res, 3000); }).then(function () {
+      add(fired ? 'ok' : 'warn', fired ? 'เบราว์เซอร์พร้อมให้ติดตั้ง' : 'เบราว์เซอร์ยังไม่ส่งสัญญาณให้ติดตั้ง',
+          fired ? 'หน้า index.html จะขึ้นปุ่มติดตั้ง' : 'หน้านี้ไม่ได้ลงทะเบียนแอป ให้ลองที่หน้าแรกและดูข้อความแนะนำที่ท้ายหน้า');
+    });
+  }).then(function () {
+    sum.textContent = problems.length
+      ? 'พบปัญหา ' + problems.length + ' ข้อ (แถบสีแดง) — แก้ข้อเหล่านั้นก่อน แล้วตรวจใหม่'
+      : 'ไฟล์ครบถ้วน หากยังไม่ขึ้นให้ติดตั้ง ให้ใช้เมนูของเบราว์เซอร์ (Chrome: ⋮ → ติดตั้งแอป / Safari: แชร์ → เพิ่มไปยังหน้าจอโฮม)';
+  });
+})();
+</script>
+</body>
+</html>
