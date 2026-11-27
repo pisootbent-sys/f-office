@@ -98,6 +98,12 @@
       .install-bar { left: auto; right: 24px; bottom: 24px; width: 400px; }
     }
 
+    #install-help { display: none; color: var(--gold-300); text-decoration: underline; text-underline-offset: 3px; }
+    @media (max-width: 768px) { #install-help { display: inline; } }
+    @media (display-mode: standalone) { #install-help { display: none !important; } }
+    .install-bar .row2 { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+    .install-bar .btn-sm { padding: 7px 12px; font-size: 14px; }
+
     /* ─── Top bar (เมนูหลัก) ─── */
     .topbar {
       position: sticky; top: 0; z-index: 100;
@@ -854,6 +860,7 @@
         <div class="container">
           <span>${esc(CONFIG.main_title)} Management</span>
           <span>${esc(CONFIG.subtitle)}</span>
+          <a href="#" id="install-help">วิธีติดตั้งแอปบนโทรศัพท์</a>
         </div>
       </footer>
 
@@ -1420,51 +1427,102 @@
   <script>
     // ── ติดตั้งเป็นแอป (PWA) ──
     (function () {
+      var ua = navigator.userAgent || '';
       var standalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
-      var KEY = 'foffice-install-dismissed';
-      var dismissed = false;
-      try { dismissed = localStorage.getItem(KEY) === '1'; } catch (e) {}
+      var isIOS     = /iPhone|iPad|iPod/.test(ua) && !window.MSStream;
+      var isAndroid = /Android/.test(ua);
+      // เบราว์เซอร์ในแอปอื่น (LINE / Facebook / Instagram ฯลฯ) ติดตั้งแอปไม่ได้
+      var inApp     = /Line\/|FBAN|FBAV|FB_IAB|Instagram|MicroMessenger|; wv\)/.test(ua);
+      var iosSafari = isIOS && /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS|GSA\//.test(ua) && !inApp;
+
+      var KEY = 'foffice-install-dismissed-v2';
+      function dismissedRecently() {
+        try { var t = Number(localStorage.getItem(KEY) || 0); return t && (Date.now() - t) < 3 * 86400000; } catch (e) { return false; }
+      }
       var deferred = null;
 
-      function bar(html) {
-        if (standalone || dismissed || document.getElementById('install-bar')) return;
+      function removeBar() { var el = document.getElementById('install-bar'); if (el) el.remove(); }
+
+      function showBar(title, sub, opts, force) {
+        if (standalone) return;
+        if (!force && dismissedRecently()) return;
+        removeBar();
+        opts = opts || {};
         var el = document.createElement('div');
         el.className = 'install-bar'; el.id = 'install-bar';
-        el.innerHTML = '<img src="icons/icon-192.png" alt="">' + html +
+        el.innerHTML = '<img src="icons/icon-192.png" alt="">' +
+          '<div class="it"><strong></strong><span></span>' +
+          (opts.copy ? '<div class="row2"><button type="button" class="btn btn-primary btn-sm copy">คัดลอกลิงก์</button></div>' : '') +
+          '</div>' +
+          (opts.install ? '<button type="button" class="btn btn-primary go">ติดตั้ง</button>' : '') +
           '<button type="button" class="x" aria-label="ปิด">&times;</button>';
+        el.querySelector('strong').textContent = title;
+        el.querySelector('span').textContent = sub;
         document.body.appendChild(el);
+
         el.querySelector('.x').addEventListener('click', function () {
-          el.remove();
-          try { localStorage.setItem(KEY, '1'); } catch (e) {}
+          removeBar();
+          try { localStorage.setItem(KEY, String(Date.now())); } catch (e) {}
         });
-        var btn = el.querySelector('.go');
-        if (btn) btn.addEventListener('click', function () {
+        var go = el.querySelector('.go');
+        if (go) go.addEventListener('click', function () {
           if (!deferred) return;
           deferred.prompt();
-          deferred.userChoice.then(function () { deferred = null; el.remove(); });
+          deferred.userChoice.then(function () { deferred = null; removeBar(); });
+        });
+        var cp = el.querySelector('.copy');
+        if (cp) cp.addEventListener('click', function () {
+          var url = location.href.split('#')[0];
+          var done = function () { cp.textContent = 'คัดลอกแล้ว ✓'; };
+          if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done, function () { window.prompt('คัดลอกลิงก์นี้', url); });
+          else window.prompt('คัดลอกลิงก์นี้', url);
         });
       }
 
-      // Android / Chrome: มีปุ่มติดตั้งให้กดได้เลย
+      // แสดงคำแนะนำตามชนิดเบราว์เซอร์ (force = ผู้ใช้กดขอเอง ไม่สนใจว่าเคยปิดไว้)
+      function showHelp(force) {
+        if (inApp) {
+          showBar('เปิดด้วย Chrome หรือ Safari ก่อน',
+                  'เบราว์เซอร์ในแอปนี้ติดตั้งไม่ได้ คัดลอกลิงก์ไปเปิดใน ' + (isIOS ? 'Safari' : 'Chrome'),
+                  { copy: true }, force);
+        } else if (isIOS && !iosSafari) {
+          showBar('iPhone ต้องใช้ Safari',
+                  'คัดลอกลิงก์ไปเปิดใน Safari แล้วแตะปุ่มแชร์ → “เพิ่มไปยังหน้าจอโฮม”',
+                  { copy: true }, force);
+        } else if (iosSafari) {
+          showBar('เพิ่มไว้บนหน้าจอโฮม',
+                  'แตะปุ่มแชร์ (สี่เหลี่ยมมีลูกศรขึ้น) แล้วเลือก “เพิ่มไปยังหน้าจอโฮม”', {}, force);
+        } else if (deferred) {
+          showBar('ติดตั้งแอป F Office', 'เปิดได้จากหน้าจอโทรศัพท์ ไม่ต้องพิมพ์ลิงก์', { install: true }, force);
+        } else if (isAndroid) {
+          showBar('เพิ่มไว้บนหน้าจอโทรศัพท์',
+                  'แตะเมนู ⋮ มุมขวาบนของ Chrome แล้วเลือก “ติดตั้งแอป” หรือ “เพิ่มลงในหน้าจอหลัก”', {}, force);
+        } else {
+          showBar('ติดตั้งแอป F Office',
+                  'ใช้เมนูของเบราว์เซอร์ → “ติดตั้งแอป” หรือ “เพิ่มลงในหน้าจอหลัก”', {}, force);
+        }
+      }
+
+      // Android / Chrome: เบราว์เซอร์ให้ปุ่มติดตั้งจริง
       window.addEventListener('beforeinstallprompt', function (e) {
         e.preventDefault();
         deferred = e;
-        bar('<div class="it"><strong>ติดตั้งแอป F Office</strong><span>เปิดได้จากหน้าจอโทรศัพท์ ไม่ต้องพิมพ์ลิงก์</span></div>' +
-            '<button type="button" class="btn btn-primary go">ติดตั้ง</button>');
+        showHelp(false);
       });
-      window.addEventListener('appinstalled', function () {
-        var el = document.getElementById('install-bar'); if (el) el.remove();
-      });
+      window.addEventListener('appinstalled', removeBar);
 
-      // iPhone / iPad (Safari): ไม่มีปุ่มติดตั้ง แสดงวิธีเพิ่มไปยังหน้าจอโฮมแทน
-      var ua = navigator.userAgent || '';
-      var isIOS = /iPhone|iPad|iPod/.test(ua) && !window.MSStream;
-      var isSafari = /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS/.test(ua);
-      if (isIOS && isSafari) {
-        setTimeout(function () {
-          bar('<div class="it"><strong>เพิ่มไว้บนหน้าจอโฮม</strong><span>แตะปุ่มแชร์ แล้วเลือก “เพิ่มไปยังหน้าจอโฮม”</span></div>');
-        }, 2500);
+      // เบราว์เซอร์ที่ไม่มีเหตุการณ์ติดตั้ง (iPhone, เบราว์เซอร์ในแอป, หรือ Chrome ยังไม่พร้อม) แสดงคำแนะนำให้เอง
+      if (!standalone && (isIOS || inApp || isAndroid)) {
+        setTimeout(function () { if (!deferred) showHelp(false); }, isAndroid && !inApp ? 4500 : 2000);
       }
+
+      // ลิงก์ "วิธีติดตั้งแอปบนโทรศัพท์" ที่ท้ายหน้า
+      document.addEventListener('click', function (e) {
+        var a = e.target.closest ? e.target.closest('#install-help') : null;
+        if (!a) return;
+        e.preventDefault();
+        showHelp(true);
+      });
 
       if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0) {
         window.addEventListener('load', function () {
