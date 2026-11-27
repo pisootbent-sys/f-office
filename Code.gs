@@ -1,16 +1,52 @@
 // ─────────────────────────────────────────
-//  F Office Management — Code.gs
+//  F Office Management — Code.gs  (เวอร์ชัน API สำหรับโฮสต์หน้าเว็บบน GitHub Pages)
+//  Deploy เป็น Web app:  Execute as = Me  /  Who has access = Anyone
 // ─────────────────────────────────────────
 
 const SPREADSHEET_ID = '1l928kuU0kfriG5oQ1ScFnsbbkHMGh8tJqfX0JpDQ8k0';
 const SHEET_NAME     = 'Sheet1';      // ตารางระบบ/ลิงก์ (คอลัมน์ A–J)
 const SECTION_SHEET  = 'Sections';    // ตารางหัวข้อ (สร้างให้อัตโนมัติ)
+const ADMIN_PIN      = '009';         // รหัสผู้ดูแล — ตรวจที่เซิร์ฟเวอร์ ผู้เข้าชมมองไม่เห็นรหัสนี้
 
-// ── Entry Point ──────────────────────────
-function doGet() {
-  return HtmlService.createHtmlOutputFromFile('Index')
-    .setTitle('F Office Management')
-    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+// ── API entry points ─────────────────────
+function doGet(e) {
+  const action = e && e.parameter ? e.parameter.action : '';
+  if (action === 'getAll') {
+    return json_({ isOk: true, records: getRecords(), sections: getSections() });
+  }
+  return json_({ isOk: true, message: 'F Office API' });
+}
+
+function doPost(e) {
+  let req;
+  try {
+    req = JSON.parse(e.postData.contents);
+  } catch (err) {
+    return json_({ isOk: false, error: 'bad request' });
+  }
+
+  // ทุกคำสั่งที่เขียนข้อมูลต้องมีรหัสผู้ดูแลที่ถูกต้อง
+  if (String(req.pin || '') !== ADMIN_PIN) {
+    return json_({ isOk: false, error: 'unauthorized' });
+  }
+
+  const p = req.payload;
+  switch (req.action) {
+    case 'verifyPin':     return json_({ isOk: true });
+    case 'createRecord':  return json_(createRecord(p));
+    case 'updateRecord':  return json_(updateRecord(p));
+    case 'deleteRecord':  return json_(deleteRecord(p));
+    case 'createSection': return json_(createSection(p));
+    case 'updateSection': return json_(updateSection(p));
+    case 'deleteSection': return json_(deleteSection(p));
+    default:              return json_({ isOk: false, error: 'unknown action' });
+  }
+}
+
+function json_(obj) {
+  return ContentService
+    .createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
 }
 
 // ── Read ─────────────────────────────────
@@ -28,9 +64,9 @@ function getRecords() {
     color:       row[4],
     order:       row[5],
     createdAt:   row[6],
-    section:     row[7] ? String(row[7]) : '',  // รหัสหัวข้อ (คอลัมน์ H)
-    extraLabel:  row[8] ? String(row[8]) : '',  // ชื่อลิงก์ภายนอก (คอลัมน์ I)
-    extraUrl:    row[9] ? String(row[9]) : ''   // URL ลิงก์ภายนอก (คอลัมน์ J)
+    section:     row[7] ? String(row[7]) : '',
+    extraLabel:  row[8] ? String(row[8]) : '',
+    extraUrl:    row[9] ? String(row[9]) : ''
   }));
 }
 
@@ -151,7 +187,7 @@ function updateSection(section) {
   }
 }
 
-// ลบหัวข้อ: ระบบที่อยู่ในหัวข้อนี้ไม่ถูกลบ แต่จะย้ายไป "ระบบอื่นๆ"
+// ลบหัวข้อ: ระบบในหัวข้อนี้ไม่ถูกลบ แต่จะย้ายไป "ระบบอื่นๆ"
 function deleteSection(section) {
   try {
     const targetId = String(section.__backendId || section.id);
