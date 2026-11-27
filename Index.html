@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>F Office Management</title>
+  <meta name="theme-color" content="#0c1a3d">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+Thai:wght@600;700&family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -649,42 +650,54 @@
   // ─────────────────────────────────────────
   //  SDK — เชื่อมต่อ Google Apps Script
   // ─────────────────────────────────────────
-  function callBackend(fn, arg) {
-    return new Promise(resolve => {
-      try {
-        google.script.run
-          .withSuccessHandler(r => resolve(r || { isOk: false }))
-          .withFailureHandler(() => resolve({ isOk: false }))[fn](arg);
-      } catch (e) { resolve({ isOk: false }); }
+  // ─────────────────────────────────────────
+  //  ตั้งค่า: วาง URL ของ Web App (ลงท้ายด้วย /exec) จาก Apps Script ตรงนี้
+  // ─────────────────────────────────────────
+  const API_URL = 'https://script.google.com/macros/s/AKfycbw2NW27CFlRhcG1ceihp1AqLHdbLOt3xkc3uRUd9J-B5ZrHp03mlrCyA5ThqmRfn4_F/exec';
+
+  let adminPin = '009';   // รหัสที่ผู้ดูแลกรอก (เก็บในหน่วยความจำเท่านั้น) ใช้ส่งไปให้เซิร์ฟเวอร์ตรวจทุกครั้งที่แก้ไขข้อมูล
+
+  const apiReady = () => API_URL.indexOf('https://script.google') === 0;
+
+  async function apiGet(action) {
+    const res = await fetch(API_URL + '?action=' + encodeURIComponent(action) + '&t=' + Date.now());
+    return await res.json();
+  }
+
+  // ใช้ Content-Type: text/plain เพื่อให้เป็น "simple request" (ไม่ติด CORS preflight ของ Apps Script)
+  async function apiPost(action, payload, pin) {
+    const res = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: action, pin: pin === undefined ? adminPin : pin, payload: payload })
     });
+    return await res.json();
+  }
+
+  async function callBackend(action, payload) {
+    try {
+      const r = await apiPost(action, payload);
+      return r && typeof r === 'object' ? r : { isOk: false };
+    } catch (e) {
+      return { isOk: false, error: 'network' };
+    }
   }
 
   window.dataSdk = {
-    init: (handler) => new Promise((resolve) => {
-      let recs = null, secs = [], pending = 2;
-      const done = () => {
-        if (--pending > 0) return;
-        if (recs === null) { resolve({ isOk: false }); return; }
-        handler.onDataChanged(recs, secs);
-        resolve({ isOk: true });
-      };
-      google.script.run
-        .withSuccessHandler(d => { recs = d; done(); })
-        .withFailureHandler(() => done())
-        .getRecords();
-      try {   // ถ้ายังไม่ได้อัปเดต Code.gs จะไม่มีฟังก์ชันนี้ → แสดงแบบไม่แบ่งหัวข้อ
-        google.script.run
-          .withSuccessHandler(d => { secs = d || []; done(); })
-          .withFailureHandler(() => done())
-          .getSections();
-      } catch (e) { done(); }
-    }),
-    create: (record) => new Promise(resolve =>
-      google.script.run.withSuccessHandler(r => resolve(r)).withFailureHandler(() => resolve({ isOk: false })).createRecord(record)),
-    update: (record) => new Promise(resolve =>
-      google.script.run.withSuccessHandler(r => resolve(r)).withFailureHandler(() => resolve({ isOk: false })).updateRecord(record)),
-    delete: (record) => new Promise(resolve =>
-      google.script.run.withSuccessHandler(r => resolve(r)).withFailureHandler(() => resolve({ isOk: false })).deleteRecord(record)),
+    init: async (handler) => {
+      try {
+        const r = await apiGet('getAll');
+        if (!r || !r.isOk) return { isOk: false };
+        handler.onDataChanged(r.records || [], r.sections || []);
+        return { isOk: true };
+      } catch (e) {
+        return { isOk: false };
+      }
+    },
+    verifyPin:     (code) => apiPost('verifyPin', {}, code).catch(() => ({ isOk: false, error: 'network' })),
+    create:        (record) => callBackend('createRecord', record),
+    update:        (record) => callBackend('updateRecord', record),
+    delete:        (record) => callBackend('deleteRecord', record),
     createSection: (sec) => callBackend('createSection', sec),
     updateSection: (sec) => callBackend('updateSection', sec),
     deleteSection: (sec) => callBackend('deleteSection', sec),
@@ -697,7 +710,6 @@
     main_title: 'F Office',
     subtitle: 'ศูนย์ส่งเสริมการเรียนรู้ระดับอำเภอฝาง',
   };
-  const ADMIN_PIN     = '009';       // รหัสเข้าโหมดจัดการ
   const DEFAULT_COLOR = '#1b3a7a';   // เก็บลงชีตเพื่อให้โครงสร้างข้อมูลเดิมไม่เปลี่ยน (ไม่ได้ใช้แสดงผลแล้ว)
 
   let currentRecords  = [];
@@ -758,6 +770,13 @@
   //  Init
   // ─────────────────────────────────────────
   async function init() {
+    if (!apiReady()) {
+      const p = document.querySelector('#loading-screen p');
+      const sp = document.querySelector('#loading-screen .spinner');
+      if (sp) sp.style.display = 'none';
+      if (p) p.textContent = 'ยังไม่ได้ตั้งค่า API_URL ในไฟล์ index.html';
+      return;
+    }
     const result = await window.dataSdk.init(dataHandler);
     if (!result.isOk) showToast('ไม่สามารถโหลดข้อมูลได้', 'error');
     hideLoading();
@@ -1063,7 +1082,7 @@
   // ─────────────────────────────────────────
   function bindEvents() {
     document.getElementById('tab-home')?.addEventListener('click', () => {
-      if (isAdminMode) { isAdminMode = false; editingId = null; render(); }
+      if (isAdminMode) { isAdminMode = false; adminPin = ''; editingId = null; render(); }
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
     document.getElementById('tab-admin')?.addEventListener('click', () => {
@@ -1114,6 +1133,7 @@
   function toggleAdmin() {
     if (isAdminMode) {          // ออกจากโหมดจัดการ ไม่ต้องใช้รหัส
       isAdminMode = false;
+      adminPin    = '';
       editingId   = null;
       editingSectionId = null;
       render();
@@ -1134,17 +1154,31 @@
     if (m) m.style.display = 'none';
   }
 
-  function submitPin(e) {
+  async function submitPin(e) {
     e.preventDefault();
     const input = document.getElementById('pin-input');
-    if (input.value.trim() === ADMIN_PIN) {
+    const btn   = document.querySelector('#pin-form button[type="submit"]');
+    const code  = input.value.trim();
+    if (!code) return;
+
+    btn.disabled = true;
+    btn.textContent = 'กำลังตรวจสอบ…';
+    const r = await window.dataSdk.verifyPin(code);
+    btn.disabled = false;
+    btn.textContent = 'ยืนยัน';
+
+    if (r && r.isOk) {
+      adminPin = code;
       closePinModal();
       isAdminMode = true;
       editingId   = null;
       render();
     } else {
       input.classList.add('is-error');
-      document.getElementById('pin-error').textContent = 'รหัสไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง';
+      document.getElementById('pin-error').textContent =
+        (r && r.error === 'network')
+          ? 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ กรุณาลองใหม่'
+          : 'รหัสไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง';
       input.select();
     }
   }
